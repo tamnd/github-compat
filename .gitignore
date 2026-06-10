@@ -1,0 +1,50 @@
+# Binary
+conform
+/conform
+
+# Test artifacts
+*.tap
+report.json
+diff-report.json
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+terraform.tfvars
+/tmp/
+
+# Node
+node_modules/
+runners/js/node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+runners/python/__pycache__/
+
+# Ruby
+runners/ruby/.bundle/
+runners/ruby/Gemfile.lock
+runners/ruby/vendor/
+
+# .NET
+runners/dotnet/bin/
+runners/dotnet/obj/
+
+# Java
+runners/java/target/
+
+# Go
+runners/go/go.sum
+
+# Secrets
+*.pem
+*.key
+.env
+
+# macOS
+.DS_Store
