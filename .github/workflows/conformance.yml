@@ -1,0 +1,206 @@
+name: Conformance
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: "Githome host (e.g. githome.example.com)"
+        required: false
+        default: ""
+      token:
+        description: "PAT for the target host"
+        required: false
+        default: ""
+      runner:
+        description: "Single runner to run (empty = all)"
+        required: false
+        default: ""
+  schedule:
+    # Daily at 02:00 UTC against secrets-configured host
+    - cron: "0 2 * * *"
+
+env:
+  GITHOME_HOST:  ${{ inputs.host || vars.GITHOME_HOST || '' }}
+  GITHOME_TOKEN: ${{ inputs.token || secrets.GITHOME_TOKEN || '' }}
+  GITHOME_OWNER: ${{ vars.GITHOME_OWNER || 'test-owner' }}
+  GITHOME_REPO:  ${{ vars.GITHOME_REPO  || 'test-repo'  }}
+
+jobs:
+  # ── git transport ────────────────────────────────────────────────────────────
+  git:
+    name: git transport
+    runs-on: ubuntu-latest
+    if: ${{ env.GITHOME_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run git tests
+        run: bash runners/shell/git_test.sh | tee git.tap
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: tap-git, path: "*.tap" }
+
+  # ── gh CLI ────────────────────────────────────────────────────────────────────
+  gh-cli:
+    name: gh CLI
+    runs-on: ubuntu-latest
+    if: ${{ env.GITHOME_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cli/setup-gh@v1
+        with: { version: "2.72.0" }
+      - run: gh auth login --hostname "$GITHOME_HOST" --with-token <<< "$GITHOME_TOKEN"
+        env: { GH_TOKEN: "" }
+      - name: Run gh CLI tests
+        run: bash runners/shell/gh_cli_test.sh | tee gh-cli.tap
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: tap-gh-cli, path: "*.tap" }
+
+  # ── Octokit JS ───────────────────────────────────────────────────────────────
+  octokit-js:
+    name: Octokit JS
+    runs-on: ubuntu-latest
+    if: ${{ env.GITHOME_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: runners/js/package.json }
+      - run: npm ci
+        working-directory: runners/js
+      - name: Run Octokit JS tests
+        run: node runners/js/octokit_test.mjs | tee octokit-js.tap
+        env:
+          GITHUB_API_URL:    "https://${{ env.GITHOME_HOST }}/api/v3"
+          GITHUB_GRAPHQL_URL: "https://${{ env.GITHOME_HOST }}/api/graphql"
+          GITHOME_APP_ID:    ${{ vars.GITHOME_APP_ID || '' }}
+          GITHOME_INSTALL_ID: ${{ vars.GITHOME_INSTALL_ID || '' }}
+          GITHOME_APP_PEM:   ${{ secrets.GITHOME_APP_PEM || '' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: tap-octokit-js, path: "*.tap" }
+
+  # ── Python ───────────────────────────────────────────────────────────────────
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    if: ${{ env.GITHOME_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -r runners/python/requirements.txt
+      - name: Run Python tests
+        run: python3 runners/python/pygithub_test.py | tee python.tap
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: tap-python, path: "*.tap" }
+
+  # ── Go clients ───────────────────────────────────────────────────────────────
+  go-clients:
+    name: Go clients
+    runs-on: ubuntu-latest
+    if: ${{ env.GITHOME_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.24", cache: true }
+      - run: go mod download
+        working-directory: runners/go
+      - name: Run Go client tests
+        run: go run . | tee ../../go-clients.tap
+        working-directory: runners/go
+        env:
+          GITHOME_APP_ID:    ${{ vars.GITHOME_APP_ID || '' }}
+          GITHOME_INSTALL_ID: ${{ vars.GITHOME_INSTALL_ID || '' }}
+          GITHOME_APP_PEM:   ${{ secrets.GITHOME_APP_PEM || '' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: tap-go-clients, path: "*.tap" }
+
+  # ── Ruby ─────────────────────────────────────────────────────────────────────
+  ruby:
+    name: Octokit.rb
+    runs-on: ubuntu-latest
+    if: ${{ env.GITHOME_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with: { ruby-version: "3.4", bundler-cache: true, working-directory: runners/ruby }
+      - name: Run Ruby tests
+        run: ruby runners/ruby/octokit_rb_test.rb | tee ruby.tap
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: tap-ruby, path: "*.tap" }
+
+  # ── .NET ─────────────────────────────────────────────────────────────────────
+  dotnet:
+    name: Octokit.NET
+    runs-on: ubuntu-latest
+    if: ${{ env.GITHOME_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "9.0.x" }
+      - run: dotnet restore
+        working-directory: runners/dotnet
+      - name: Run .NET tests
+        run: dotnet run --project runners/dotnet/CompatTest.csproj | tee dotnet.tap
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: tap-dotnet, path: "*.tap" }
+
+  # ── Java ─────────────────────────────────────────────────────────────────────
+  java:
+    name: hub4j
+    runs-on: ubuntu-latest
+    if: ${{ env.GITHOME_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { java-version: "21", distribution: temurin, cache: maven }
+      - name: Run Java tests
+        run: mvn -pl runners/java -q test -Dsurefire.useFile=false 2>&1 | tee java.tap
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: tap-java, path: "*.tap" }
+
+  # ── Terraform ────────────────────────────────────────────────────────────────
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    if: ${{ env.GITHOME_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.x" }
+      - name: Run Terraform tests
+        run: bash runners/shell/terraform_test.sh | tee terraform.tap
+        env:
+          GITHUB_TOKEN: ${{ env.GITHOME_TOKEN }}
+          GITHUB_OWNER: ${{ env.GITHOME_OWNER }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: tap-terraform, path: "*.tap" }
+
+  # ── Report ───────────────────────────────────────────────────────────────────
+  report:
+    name: Aggregate report
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [git, gh-cli, octokit-js, python, go-clients, ruby, dotnet, java, terraform]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: tap-results, pattern: "tap-*", merge-multiple: true }
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.24" }
+      - name: Build conform
+        run: go build -o conform ./cmd/conform
+      - name: Generate report
+        run: |
+          cat tap-results/*.tap 2>/dev/null > all.tap || true
+          echo "--- Gate results ---"
+          grep -E '^(ok|not ok)' all.tap | sort || echo "(no TAP results)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: conformance-report, path: "all.tap" }
